@@ -3,38 +3,423 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SoundScape — Audio Visualizer</title>
+<title>SoundScape</title>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;font-family:'Share Tech Mono',monospace;color:#e0e0ff;overflow:hidden;width:100vw;height:100vh}
-#canvas{position:fixed;top:0;left:0;width:100%;height:100%}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:'Share Tech Mono',monospace;color:#cce}
 
-/* ─── TOPBAR ─── */
-#topbar{position:fixed;top:0;left:0;right:0;height:50px;background:rgba(0,0,18,.88);border-bottom:1px solid rgba(0,220,255,.18);display:flex;align-items:center;padding:0 16px;gap:10px;z-index:100;backdrop-filter:blur(14px)}
-#topbar h1{font-family:'Orbitron',sans-serif;font-size:15px;font-weight:900;color:#00e5ff;letter-spacing:4px;flex:1;text-shadow:0 0 18px #00e5ff88}
-.top-btn{background:rgba(0,210,255,.08);border:1px solid rgba(0,210,255,.25);color:#00e5ff;padding:6px 14px;font-family:'Share Tech Mono',monospace;font-size:11px;cursor:pointer;transition:all .2s;letter-spacing:1px}
-.top-btn:hover{background:rgba(0,210,255,.2);border-color:#00e5ff;box-shadow:0 0 10px rgba(0,210,255,.3)}
-.top-btn.active{background:rgba(0,210,255,.28);border-color:#00e5ff;box-shadow:0 0 16px rgba(0,210,255,.5)}
-#mini-wave{border:1px solid rgba(0,200,255,.18);display:block}
-.level-chip{font-size:9px;letter-spacing:1px;line-height:1.6;color:rgba(0,220,255,.55)}
-#mic-bar-wrap{width:70px;height:5px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden}
-#mic-bar{height:100%;width:0%;background:linear-gradient(90deg,#00e5ff,#ff00aa);transition:width .05s;border-radius:3px}
+canvas#cv{position:fixed;top:0;left:0;width:100%;height:100%;display:block}
 
-/* ─── PANEL ─── */
-#panel{position:fixed;top:50px;right:0;width:310px;height:calc(100vh - 50px);background:rgba(0,0,18,.94);border-left:1px solid rgba(0,210,255,.16);overflow-y:auto;z-index:90;transform:translateX(100%);transition:transform .3s ease;backdrop-filter:blur(22px)}
-#panel.open{transform:translateX(0)}
+/* TOPBAR */
+#topbar{
+  position:fixed;top:0;left:0;right:0;height:48px;
+  background:rgba(0,4,20,.9);border-bottom:1px solid rgba(0,220,255,.2);
+  display:flex;align-items:center;padding:0 14px;gap:10px;z-index:500;
+  backdrop-filter:blur(12px);
+}
+#topbar h1{font-family:'Orbitron',sans-serif;font-size:14px;font-weight:900;letter-spacing:5px;color:#00e5ff;text-shadow:0 0 16px #00e5ff;flex:1}
+.tbtn{
+  background:rgba(0,200,255,.07);border:1px solid rgba(0,200,255,.3);
+  color:#00e5ff;padding:5px 13px;font-family:'Share Tech Mono',monospace;
+  font-size:11px;letter-spacing:1px;cursor:pointer;transition:all .18s;white-space:nowrap;
+}
+.tbtn:hover,.tbtn.on{background:rgba(0,200,255,.22);border-color:#00e5ff;box-shadow:0 0 12px rgba(0,200,255,.3)}
+@keyframes glow{0%,100%{box-shadow:none}50%{box-shadow:0 0 18px rgba(0,200,255,.7)}}
+.tbtn.pulse{animation:glow 1.4s infinite}
+
+/* mini meter */
+#meter{display:flex;flex-direction:column;gap:3px;min-width:72px}
+.mrow{display:flex;align-items:center;gap:5px;font-size:8px;letter-spacing:1px;color:rgba(0,200,255,.5)}
+.mbar{flex:1;height:4px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden}
+.mfill{height:100%;width:0%;border-radius:2px;transition:width .06s}
+#mb{background:linear-gradient(90deg,#00aaff,#00e5ff)}
+#mm{background:linear-gradient(90deg,#aa00ff,#ff00ff)}
+#mh{background:linear-gradient(90deg,#ff6600,#ffcc00)}
+
+/* PANEL */
+#panel{
+  position:fixed;top:48px;right:0;width:322px;height:calc(100vh - 48px);
+  background:rgba(0,3,18,.98);border-left:1px solid rgba(0,200,255,.22);
+  overflow-y:auto;z-index:600;transform:translateX(100%);
+  transition:transform .3s ease;
+}
+#panel.on{transform:translateX(0);box-shadow:-6px 0 30px rgba(0,200,255,.07)}
 #panel::-webkit-scrollbar{width:3px}
-#panel::-webkit-scrollbar-thumb{background:rgba(0,200,255,.25)}
+#panel::-webkit-scrollbar-thumb{background:rgba(0,200,255,.2)}
 
-.ps{border-bottom:1px solid rgba(0,200,255,.09);overflow:hidden}
-.psh{display:flex;align-items:center;padding:11px 15px;cursor:pointer;font-size:10px;letter-spacing:2px;color:#00e5ff;text-transform:uppercase;user-select:none}
-.psh:hover{background:rgba(0,200,255,.05)}
-.psc{padding:12px 15px;display:none}
-.psc.open{display:block}
-.ti{margin-left:auto;display:inline-block;transition:transform .2s}
+.phdr{
+  display:flex;align-items:center;padding:11px 14px;
+  border-bottom:1px solid rgba(0,200,255,.1);background:rgba(0,200,255,.04);
+  font-family:'Orbitron',sans-serif;font-size:10px;letter-spacing:3px;color:#00e5ff;
+}
+.phdr span{flex:1}
+.phdr button{
+  background:transparent;border:1px solid rgba(0,200,255,.2);
+  color:rgba(0,200,255,.5);font-family:'Share Tech Mono',monospace;
+  font-size:10px;padding:3px 9px;cursor:pointer;letter-spacing:1px;
+}
+.phdr button:hover{color:#00e5ff;border-color:#00e5ff}
 
-.field{margin-bottom:10px}
+/* sections */
+.sec{border-bottom:1px solid rgba(0,200,255,.08)}
+.sec-h{
+  display:flex;align-items:center;padding:10px 14px;cursor:pointer;
+  font-size:9px;letter-spacing:2px;color:#00e5ff;text-transform:uppercase;user-select:none;
+}
+.sec-h:hover{background:rgba(0,200,255,.05)}
+.sec-h .arr{margin-left:auto;transition:transform .2s;font-size:10px}
+.sec-b{display:none;padding:12px 14px}
+.sec-b.on{display:block}
+
+/* fields */
+.f{margin-bottom:9px}
+.f label,.flabel{display:block;font-size:8px;letter-spacing:1.5px;color:rgba(0,200,255,.55);margin-bottom:3px;text-transform:uppercase}
+.f input[type=text],.f input[type=number],.f select{
+  width:100%;background:rgba(0,200,255,.05);border:1px solid rgba(0,200,255,.18);
+  color:#cce;padding:5px 8px;font-family:'Share Tech Mono',monospace;font-size:11px;outline:none;
+}
+.f input:focus,.f select:focus{border-color:#00e5ff}
+.f select option{background:#000314}
+.f input[type=range]{width:100%;accent-color:#00e5ff;cursor:pointer}
+.f input[type=color]{width:36px;height:26px;border:1px solid rgba(0,200,255,.2);background:transparent;cursor:pointer;padding:1px}
+.row{display:flex;gap:7px;align-items:flex-end}
+.row .f{flex:1}
+.ck{display:flex;align-items:center;gap:7px;margin-bottom:8px}
+.ck label{font-size:8px;letter-spacing:1px;color:rgba(0,200,255,.55);text-transform:uppercase;margin:0;cursor:pointer}
+.ck input{accent-color:#00e5ff;cursor:pointer}
+
+.btn{
+  width:100%;background:rgba(0,200,255,.07);border:1px solid rgba(0,200,255,.22);
+  color:#00e5ff;padding:6px 10px;font-family:'Share Tech Mono',monospace;
+  font-size:10px;letter-spacing:1px;cursor:pointer;margin-top:4px;transition:all .18s;
+}
+.btn:hover{background:rgba(0,200,255,.18);border-color:#00e5ff}
+.btn.r{border-color:rgba(255,60,60,.3);color:#ff6655}
+.btn.r:hover{background:rgba(255,60,60,.12);border-color:#ff6655}
+.btn.p{border-color:rgba(255,0,180,.3);color:#ff44cc}
+.btn.p:hover{background:rgba(255,0,180,.12);border-color:#ff44cc}
+
+/* preset list */
+.pi{display:flex;align-items:center;padding:6px 8px;border:1px solid rgba(0,200,255,.1);margin-bottom:4px;cursor:pointer;transition:all .15s;}
+.pi:hover{background:rgba(0,200,255,.06);border-color:rgba(0,200,255,.28)}
+.pi.on{background:rgba(0,200,255,.12);border-color:#00e5ff}
+.pi-name{flex:1;font-size:10px}
+.pi-btns button{background:transparent;border:1px solid rgba(0,200,255,.15);color:rgba(0,200,255,.55);font-size:8px;padding:2px 6px;cursor:pointer;font-family:'Share Tech Mono',monospace;margin-left:3px;}
+.pi-btns button:hover{color:#00e5ff;border-color:#00e5ff}
+
+/* playlist */
+.pli{display:flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid rgba(255,0,180,.1);margin-bottom:3px;font-size:9px}
+.pli.now{border-color:rgba(255,0,180,.5);background:rgba(255,0,180,.06);color:#ff44cc}
+.pli input[type=number]{width:44px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);color:#cce;padding:2px 4px;font-family:'Share Tech Mono',monospace;font-size:9px}
+.pl-x{background:transparent;border:none;color:rgba(255,80,80,.5);cursor:pointer;font-size:12px}
+.pl-x:hover{color:#ff5555}
+#pl-bar-wrap{width:100%;height:3px;background:rgba(255,0,180,.1);margin:6px 0}
+#pl-bar{height:100%;width:0%;background:#ff44cc;box-shadow:0 0 8px #ff44cc;transition:width .1s}
+
+/* element cards */
+.ec{border:1px solid rgba(0,200,255,.12);padding:10px;margin-bottom:8px;background:rgba(0,200,255,.02)}
+.ec-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:9px;letter-spacing:1px;color:#00e5ff}
+.sep{font-size:8px;letter-spacing:2px;color:rgba(0,200,255,.35);margin:10px 0 7px;border-bottom:1px solid rgba(0,200,255,.07);padding-bottom:3px}
+
+/* WELCOME */
+#wlc{
+  position:fixed;inset:0;z-index:800;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,12,.94);backdrop-filter:blur(16px);transition:opacity .4s;
+}
+#wlc-box{
+  border:1px solid rgba(0,220,255,.25);background:rgba(0,4,22,.97);
+  padding:36px 40px;max-width:430px;width:92%;text-align:center;
+  box-shadow:0 0 60px rgba(0,180,255,.1);
+}
+#wlc h2{font-family:'Orbitron',sans-serif;font-size:20px;letter-spacing:5px;color:#00e5ff;text-shadow:0 0 20px #00e5ff88;margin-bottom:4px}
+.wlc-sub{font-size:9px;letter-spacing:3px;color:rgba(0,200,255,.4);margin-bottom:26px;text-transform:uppercase}
+.wlc-ico{font-size:50px;display:block;margin-bottom:16px}
+#wlc p{font-size:11px;line-height:1.9;color:rgba(200,220,255,.7);margin-bottom:18px}
+.wlc-hint{font-size:10px;color:rgba(0,200,255,.4);border:1px solid rgba(0,200,255,.1);padding:10px 12px;margin-bottom:22px;text-align:left;line-height:1.9}
+.wlc-hint b{color:rgba(0,200,255,.7)}
+#wlc-btn{background:rgba(0,200,255,.1);border:1px solid #00e5ff;color:#00e5ff;width:100%;padding:13px;font-family:'Orbitron',monospace;font-size:12px;letter-spacing:3px;cursor:pointer;transition:all .22s;text-transform:uppercase}
+#wlc-btn:hover{background:rgba(0,200,255,.22);box-shadow:0 0 20px rgba(0,200,255,.35)}
+#wlc-btn:disabled{opacity:.5;cursor:wait}
+#wlc-skip{background:transparent;border:none;color:rgba(0,200,255,.28);font-family:'Share Tech Mono',monospace;font-size:10px;letter-spacing:2px;cursor:pointer;margin-top:11px;display:block;width:100%}
+#wlc-skip:hover{color:rgba(0,200,255,.55)}
+#wlc-err{display:none;margin-top:14px;padding:11px;border:1px solid rgba(255,80,80,.28);background:rgba(255,0,0,.04);font-size:9px;line-height:1.9;color:rgba(255,150,150,.8);text-align:left}
+#wlc-err b{color:#ff7766}
+
+/* TOAST */
+#toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:rgba(0,8,28,.88);border:1px solid rgba(0,200,255,.35);
+  color:#00e5ff;padding:7px 18px;font-size:11px;letter-spacing:2px;
+  z-index:900;opacity:0;transition:opacity .25s;pointer-events:none;
+  backdrop-filter:blur(10px);white-space:nowrap;
+}
+#toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+
+<div id="topbar">
+  <h1>SOUNDSCAPE</h1>
+  <div id="meter">
+    <div class="mrow">B<div class="mbar"><div class="mfill" id="mb"></div></div></div>
+    <div class="mrow">M<div class="mbar"><div class="mfill" id="mm"></div></div></div>
+    <div class="mrow">H<div class="mbar"><div class="mfill" id="mh"></div></div></div>
+  </div>
+  <button class="tbtn" id="btn-mic" onclick="toggleMic()">▶ MIC</button>
+  <button class="tbtn pulse" id="btn-panel" onclick="togglePanel()">CONFIG ≡</button>
+</div>
+
+<div id="panel">
+  <div class="phdr">
+    <span>CONFIGURACIÓN</span>
+    <button onclick="togglePanel()">✕ CERRAR</button>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h" onclick="toggleSec(this)"><span>⬡ PRESETS</span><span class="arr">▼</span></div>
+    <div class="sec-b on">
+      <div id="preset-list"></div>
+      <div class="row" style="margin-top:7px">
+        <div class="f"><input type="text" id="pname" placeholder="nombre del preset…"></div>
+        <button class="btn" style="width:auto;margin:0;padding:5px 10px" onclick="savePreset()">SAVE</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h" onclick="toggleSec(this)"><span>⟳ PLAYLIST</span><span class="arr">▼</span></div>
+    <div class="sec-b">
+      <div id="pl-bar-wrap"><div id="pl-bar"></div></div>
+      <div id="pl-list"></div>
+      <div class="row">
+        <div class="f"><label class="flabel">Preset</label><select id="pl-sel"></select></div>
+        <div class="f"><label class="flabel">Seg.</label><input type="number" id="pl-dur" value="12" min="1" max="3600" style="width:56px"></div>
+        <button class="btn" style="width:auto;margin:0;padding:5px 9px" onclick="plAdd()">+</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn p" id="btn-pl" onclick="plToggle()">▶ INICIAR</button>
+        <button class="btn r" style="width:auto;padding:5px 10px" onclick="plClear()">CLR</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h" onclick="toggleSec(this)"><span>◈ ESCENA</span><span class="arr">▼</span></div>
+    <div class="sec-b">
+      <div class="sep">— FONDO —</div>
+      <div class="f"><label>Tipo</label>
+        <select id="s-bg-type" onchange="sceneChange()">
+          <option value="gradient">Gradiente</option>
+          <option value="stars">Estrellas</option>
+          <option value="solid">Sólido</option>
+          <option value="grid">Cuadrícula</option>
+          <option value="blobs">Manchas</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="f"><label>Color A</label><input type="color" id="s-bg-c1" value="#000520" onchange="sceneChange()"></div>
+        <div class="f"><label>Color B</label><input type="color" id="s-bg-c2" value="#1a0040" onchange="sceneChange()"></div>
+        <div class="f"><label>Color C</label><input type="color" id="s-bg-c3" value="#002040" onchange="sceneChange()"></div>
+      </div>
+      <div class="ck"><input type="checkbox" id="s-bg-r" onchange="sceneChange()"><label for="s-bg-r">Reactivo al audio</label></div>
+      <div class="sep">— CIELO —</div>
+      <div class="ck"><input type="checkbox" id="s-sky-on" checked onchange="sceneChange()"><label for="s-sky-on">Mostrar cielo</label></div>
+      <div class="f"><label>Tipo</label>
+        <select id="s-sky-type" onchange="sceneChange()">
+          <option value="gradient">Gradiente</option>
+          <option value="aurora">Aurora boreal</option>
+          <option value="sunset">Atardecer</option>
+          <option value="void">Sin cielo</option>
+        </select>
+      </div>
+      <div class="f"><label>Elemento celestial</label>
+        <select id="s-sky-cel" onchange="sceneChange()">
+          <option value="none">Ninguno</option>
+          <option value="moon">Luna</option>
+          <option value="sun">Sol</option>
+          <option value="ring">Anillo orbital</option>
+          <option value="portal">Portal</option>
+        </select>
+      </div>
+      <div class="sep">— SUELO —</div>
+      <div class="ck"><input type="checkbox" id="s-gnd-on" checked onchange="sceneChange()"><label for="s-gnd-on">Mostrar suelo</label></div>
+      <div class="f"><label>Tipo</label>
+        <select id="s-gnd-type" onchange="sceneChange()">
+          <option value="wave">Ondas de audio</option>
+          <option value="flat">Plano</option>
+          <option value="city">Ciudad</option>
+          <option value="mountain">Montaña</option>
+          <option value="grid3d">Cuadrícula 3D</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="f"><label>Color</label><input type="color" id="s-gnd-col" value="#0a1a3a" onchange="sceneChange()"></div>
+        <div class="f"><label>Altura %</label><input type="range" id="s-gnd-h" min="5" max="60" value="20" oninput="sceneChange()"></div>
+      </div>
+      <div class="ck"><input type="checkbox" id="s-gnd-r" checked onchange="sceneChange()"><label for="s-gnd-r">Reactivo al bass</label></div>
+      <div class="ck"><input type="checkbox" id="s-gnd-glow" onchange="sceneChange()"><label for="s-gnd-glow">Brillo en borde</label></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h" onclick="toggleSec(this)"><span>◆ ELEMENTOS</span><span class="arr">▼</span></div>
+    <div class="sec-b">
+      <div id="elem-list"></div>
+      <button class="btn" onclick="addElem('polygon')">+ POLÍGONO</button>
+      <button class="btn" onclick="addElem('letter')">+ LETRAS / SÍMBOLOS</button>
+      <button class="btn" onclick="addElem('particle')">+ PARTÍCULAS</button>
+      <button class="btn" onclick="addElem('wave')">+ FORMA DE ONDA</button>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-h" onclick="toggleSec(this)"><span>◉ AUDIO</span><span class="arr">▼</span></div>
+    <div class="sec-b">
+      <div class="f"><label>Sensibilidad</label><input type="range" id="s-sens" min="1" max="10" value="5" oninput="sceneChange()"></div>
+      <div class="f"><label>Suavizado</label><input type="range" id="s-smooth" min="0" max="97" value="75" oninput="sceneChange()"></div>
+    </div>
+  </div>
+</div>
+
+<div id="wlc">
+  <div id="wlc-box">
+    <span class="wlc-ico">🎤</span>
+    <h2>SOUNDSCAPE</h2>
+    <div class="wlc-sub">Visualizador de audio en tiempo real</div>
+    <p>Pulsa el botón para conceder acceso al micrófono. Los gráficos reaccionarán al sonido en tiempo real.</p>
+    <div class="wlc-hint">
+      <b>Chrome / Edge:</b> icono 🔒 en la barra → Permitir<br>
+      <b>Firefox:</b> popup en la parte superior → Permitir<br>
+      <b>Safari:</b> Menú Safari → Ajustes del sitio → Micrófono<br>
+      <b>Archivo local (file://):</b> usa Live Server en VS Code
+    </div>
+    <button id="wlc-btn" onclick="wlcStart()">▶ &nbsp;ACTIVAR MICRÓFONO</button>
+    <div id="wlc-err"></div>
+    <button id="wlc-skip" onclick="wlcClose()">Continuar sin micrófono →</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// ─── CANVAS ───
+const CV = document.getElementById('cv');
+const CX = CV.getContext('2d');
+let W = CV.width  = window.innerWidth;
+let H = CV.height = window.innerHeight;
+window.addEventListener('resize', () => {
+  W = CV.width  = window.innerWidth;
+  H = CV.height = window.innerHeight;
+});
+
+// ─── AUDIO ───
+let actx=null, analyser=null, micStream=null, micOn=false;
+let freqData = new Uint8Array(1024);
+let timeData = new Uint8Array(1024);
+const A = { b:0, m:0, h:0, a:0 }; // bass mid hi all — smoothed 0..1
+
+async function startMic(){
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
+      throw { name:'SecurityError' };
+    micStream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+    actx      = new (window.AudioContext || window.webkitAudioContext)();
+    analyser  = actx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.75;
+    actx.createMediaStreamSource(micStream).connect(analyser);
+    freqData  = new Uint8Array(analyser.frequencyBinCount);
+    timeData  = new Uint8Array(analyser.frequencyBinCount);
+    micOn = true;
+    document.getElementById('btn-mic').textContent = '⏹ MIC';
+    document.getElementById('btn-mic').classList.add('on');
+    toast('🎤 Micrófono activo');
+    return true;
+  } catch(e) {
+    const map = {
+      NotAllowedError  : '<b>Permiso denegado.</b> Haz clic en 🔒 en la barra → Permitir micrófono → recarga.',
+      NotFoundError    : '<b>Micrófono no encontrado.</b> Conecta uno e inténtalo de nuevo.',
+      NotReadableError : '<b>Micrófono ocupado.</b> Otra aplicación lo está usando.',
+      SecurityError    : '<b>Contexto no seguro.</b> Abre desde localhost (Live Server en VS Code).'
+    };
+    return map[e.name] || `<b>Error:</b> ${e.message||e.name}`;
+  }
+}
+
+function stopMic(){
+  if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  if (actx)      { actx.close(); actx=null; }
+  analyser=null; micOn=false;
+  document.getElementById('btn-mic').textContent='▶ MIC';
+  document.getElementById('btn-mic').classList.remove('on');
+}
+
+async function toggleMic(){ micOn ? stopMic() : await startMic(); }
+
+function updateAudio(){
+  // decay when no mic
+  if (!analyser){
+    A.b*=.92; A.m*=.92; A.h*=.92; A.a*=.92;
+    document.getElementById('mb').style.width=(A.b*100)+'%';
+    document.getElementById('mm').style.width=(A.m*100)+'%';
+    document.getElementById('mh').style.width=(A.h*100)+'%';
+    return;
+  }
+  analyser.smoothingTimeConstant = SC.audio.smooth/100;
+  analyser.getByteFrequencyData(freqData);
+  analyser.getByteTimeDomainData(timeData);
+  const n=freqData.length, bE=Math.floor(n*.05), mE=Math.floor(n*.30);
+  let bs=0,ms=0,hs=0;
+  for(let i=0;   i<bE; i++) bs+=freqData[i];
+  for(let i=bE;  i<mE; i++) ms+=freqData[i];
+  for(let i=mE;  i<n;  i++) hs+=freqData[i];
+  const s=SC.audio.sens/5;
+  const rB=Math.min(1,(bs/(bE*255))*s*2.5);
+  const rM=Math.min(1,(ms/((mE-bE)*255))*s*3.0);
+  const rH=Math.min(1,(hs/((n-mE)*255))*s*3.8);
+  const rA=(rB+rM+rH)/3;
+  const sp=.2;
+  A.b=A.b*(1-sp)+rB*sp; A.m=A.m*(1-sp)+rM*sp;
+  A.h=A.h*(1-sp)+rH*sp; A.a=A.a*(1-sp)+rA*sp;
+  document.getElementById('mb').style.width=(A.b*100)+'%';
+  document.getElementById('mm').style.width=(A.m*100)+'%';
+  document.getElementById('mh').style.width=(A.h*100)+'%';
+}
+
+function aLev(band){
+  return band==='bass'?A.b : band==='mid'?A.m : band==='treble'?A.h : A.a;
+}
+
+// ─── SCENE ───
+// SC is the live state used by renderer.
+// scene is the config/preset structure (synced from SC or DOM).
+let SC = mkDefault();
+
+function mkDefault(){
+  return {
+    bg:   {type:'gradient',c1:'#000520',c2:'#1a0040',c3:'#002040',reactive:false},
+    sky:  {on:true, type:'gradient', cel:'moon'},
+    gnd:  {on:true, type:'wave', col:'#0a1a3a', h:20, reactive:true, glow:false},
+    elems:[],
+    audio:{sens:5, smooth:75}
+  };
+}
+
+// ─── POOL ───
+let pool=[], eid=0, T=0, hueOff=0, beat=false, beatCd=0;
+
+function mkInst(cfg){
+  const sz=(cfg.sizeMin||20)+Math.random()*((cfg.sizeMax||55)-(cfg.sizeMin||20));
+  const chars=cfg.chars||'ABCDEFGHIJKLMNOPQRSTUVWXYZ★◆✦⬡◈';
+  return {
+    x:Math.random()*W, y:Math.random()*H,
+    vx:(Math.random()-.5)*(cfg.speed||.5)*1.8,
+    vy:(Math.random()-.5)*(cfg.field{margin-bottom:10px}
 .field label{display:block;font-size:9px;letter-spacing:1.2px;color:rgba(0,210,255,.65);margin-bottom:3px;text-transform:uppercase}
 .field input[type=text],.field input[type=number],.field select,.field textarea{width:100%;background:rgba(0,200,255,.05);border:1px solid rgba(0,200,255,.2);color:#dde;padding:5px 9px;font-family:'Share Tech Mono',monospace;font-size:11px;outline:none;transition:border-color .2s}
 .field input:focus,.field select:focus{border-color:#00e5ff;box-shadow:0 0 7px rgba(0,200,255,.2)}
