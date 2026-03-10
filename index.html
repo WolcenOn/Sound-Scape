@@ -272,6 +272,9 @@ canvas#cv{position:fixed;top:0;left:0;width:100%;height:100%;display:block;z-ind
       <button class="btn" onclick="addElem('letter')">+ LETRAS / SÍMBOLOS</button>
       <button class="btn" onclick="addElem('particle')">+ PARTÍCULAS</button>
       <button class="btn" onclick="addElem('wave')">+ FORMA DE ONDA</button>
+      <button class="btn p" onclick="addElem('invader')">+ SPACE INVADER</button>
+      <button class="btn p" onclick="addElem('paddle')">+ ARKANOID</button>
+      <button class="btn p" onclick="addElem('cube3d')">+ CUBO 3D</button>
     </div>
   </div>
 
@@ -296,9 +299,9 @@ canvas#cv{position:fixed;top:0;left:0;width:100%;height:100%;display:block;z-ind
       <b>Safari:</b> Menú Safari → Ajustes del sitio → Micrófono<br>
       <b>Archivo local (file://):</b> usa Live Server en VS Code
     </div>
-    <button id="wlc-btn">▶ &nbsp;ACTIVAR MICRÓFONO</button>
+    <button id="wlc-btn" onclick="wlcStart()">▶ &nbsp;ACTIVAR MICRÓFONO</button>
     <div id="wlc-err"></div>
-    <button id="wlc-skip">Continuar sin micrófono →</button>
+    <button id="wlc-skip" onclick="wlcClose()">Continuar sin micrófono →</button>
   </div>
 </div>
 
@@ -321,7 +324,11 @@ window.addEventListener('resize', () => {
 let actx=null, analyser=null, micStream=null, micOn=false;
 let freqData = new Uint8Array(1024);
 let timeData = new Uint8Array(1024);
-const A = { b:0, m:0, h:0, a:0 }; // bass mid hi all — smoothed 0..1
+const A = {
+  sub:0, bass:0, lowmid:0, mid:0, presence:0, treble:0, air:0,
+  b:0, m:0, h:0, a:0, beat:0
+}; // smoothed 0..1 bands
+let beatEnergy = 0;
 
 async function startMic(){
   try {
@@ -359,12 +366,24 @@ function stopMic(){
   document.getElementById('btn-mic').classList.remove('on');
 }
 
-async function toggleMic(){ micOn ? stopMic() : await startMic(); }
+async function toggleMic(){
+  if (micOn) {
+    stopMic();
+    return;
+  }
+  const ok = await startMic();
+  if (ok === true) {
+    const w = document.getElementById('wlc');
+    if (w && w.style.display !== 'none') wlcClose();
+  } else if (typeof ok === 'string') {
+    const err = document.getElementById('wlc-err');
+    if (err) { err.innerHTML = ok; err.style.display = 'block'; }
+  }
+}
 
 function updateAudio(){
-  // decay when no mic
   if (!analyser){
-    A.b*=.92; A.m*=.92; A.h*=.92; A.a*=.92;
+    ['sub','bass','lowmid','mid','presence','treble','air','b','m','h','a','beat'].forEach(k=>A[k]*=.9);
     document.getElementById('mb').style.width=(A.b*100)+'%';
     document.getElementById('mm').style.width=(A.m*100)+'%';
     document.getElementById('mh').style.width=(A.h*100)+'%';
@@ -373,26 +392,57 @@ function updateAudio(){
   analyser.smoothingTimeConstant = SC.audio.smooth/100;
   analyser.getByteFrequencyData(freqData);
   analyser.getByteTimeDomainData(timeData);
-  const n=freqData.length, bE=Math.floor(n*.05), mE=Math.floor(n*.30);
-  let bs=0,ms=0,hs=0;
-  for(let i=0;   i<bE; i++) bs+=freqData[i];
-  for(let i=bE;  i<mE; i++) ms+=freqData[i];
-  for(let i=mE;  i<n;  i++) hs+=freqData[i];
-  const s=SC.audio.sens/5;
-  const rB=Math.min(1,(bs/(bE*255))*s*2.5);
-  const rM=Math.min(1,(ms/((mE-bE)*255))*s*3.0);
-  const rH=Math.min(1,(hs/((n-mE)*255))*s*3.8);
-  const rA=(rB+rM+rH)/3;
-  const sp=.2;
-  A.b=A.b*(1-sp)+rB*sp; A.m=A.m*(1-sp)+rM*sp;
-  A.h=A.h*(1-sp)+rH*sp; A.a=A.a*(1-sp)+rA*sp;
+
+  const nyquist = actx ? actx.sampleRate / 2 : 24000;
+  const hzPerBin = nyquist / freqData.length;
+  const ranges = {
+    sub:[20,60], bass:[60,160], lowmid:[160,400], mid:[400,1200],
+    presence:[1200,3200], treble:[3200,8000], air:[8000,16000]
+  };
+
+  const avgRange = (lo, hi) => {
+    let i0 = Math.max(0, Math.floor(lo / hzPerBin));
+    let i1 = Math.min(freqData.length - 1, Math.ceil(hi / hzPerBin));
+    if (i1 <= i0) i1 = Math.min(freqData.length - 1, i0 + 1);
+    let sum = 0;
+    for (let i = i0; i <= i1; i++) sum += freqData[i];
+    return sum / ((i1 - i0 + 1) * 255);
+  };
+
+  const sens = SC.audio.sens / 5;
+  const raw = {
+    sub:      Math.min(1, avgRange(...ranges.sub) * sens * 2.8),
+    bass:     Math.min(1, avgRange(...ranges.bass) * sens * 2.5),
+    lowmid:   Math.min(1, avgRange(...ranges.lowmid) * sens * 2.2),
+    mid:      Math.min(1, avgRange(...ranges.mid) * sens * 2.0),
+    presence: Math.min(1, avgRange(...ranges.presence) * sens * 2.4),
+    treble:   Math.min(1, avgRange(...ranges.treble) * sens * 2.9),
+    air:      Math.min(1, avgRange(...ranges.air) * sens * 3.1)
+  };
+
+  const sp = .18;
+  Object.keys(raw).forEach(k => A[k] = A[k] * (1 - sp) + raw[k] * sp);
+
+  A.b = Math.min(1, A.sub * .35 + A.bass * .65);
+  A.m = Math.min(1, A.lowmid * .35 + A.mid * .4 + A.presence * .25);
+  A.h = Math.min(1, A.treble * .7 + A.air * .3);
+  A.a = Math.min(1, (A.sub + A.bass + A.lowmid + A.mid + A.presence + A.treble + A.air) / 7);
+
+  const transient = Math.max(0, raw.sub + raw.bass * 1.2 - (A.b * .9));
+  beatEnergy = beatEnergy * .82 + transient * .55;
+  A.beat = Math.min(1, beatEnergy * 1.8 + transient * .9);
+
   document.getElementById('mb').style.width=(A.b*100)+'%';
   document.getElementById('mm').style.width=(A.m*100)+'%';
   document.getElementById('mh').style.width=(A.h*100)+'%';
 }
 
 function aLev(band){
-  return band==='bass'?A.b : band==='mid'?A.m : band==='treble'?A.h : A.a;
+  const map = {
+    sub:A.sub, bass:A.bass, lowmid:A.lowmid, mid:A.mid, presence:A.presence,
+    treble:A.treble, air:A.air, overall:A.a, beat:A.beat
+  };
+  return map[band] ?? A.a;
 }
 
 // ─── SCENE ───
@@ -420,10 +470,11 @@ function mkInst(cfg){
     x:Math.random()*W, y:Math.random()*H,
     vx:(Math.random()-.5)*(cfg.speed||.5)*1.8,
     vy:(Math.random()-.5)*(cfg.speed||.5)*1.8,
-    sz, rot:Math.random()*Math.PI*2,
-    hue:Math.random()*360,
+    sz, baseX:Math.random()*W, baseY:Math.random()*H, rot:Math.random()*Math.PI*2,
+    hue:Math.random()*360, phase:Math.random()*Math.PI*2, orbit:18+Math.random()*42,
+    depth:.35+Math.random()*.95, zJitter:Math.random()*Math.PI*2,
     char:chars[Math.floor(Math.random()*chars.length)],
-    trail:[], flash:0, rndCol:rndHex()
+    trail:[], flash:0, rndCol:rndHex(), drift:Math.random()*2000
   };
 }
 
@@ -445,16 +496,25 @@ function render(){
   updateAudio();
   T++; hueOff=(hueOff+.25)%360;
   beat=false;
-  if(A.b>.45&&beatCd<=0){beat=true;beatCd=18;}
+  if((A.beat>.38 || A.b>.52)&&beatCd<=0){beat=true;beatCd=16;}
   if(beatCd>0) beatCd--;
   tickPlaylist();
   CX.clearRect(0,0,W,H);
   drawBG(); drawSky(); drawElems(); drawGround();
 }
 
+function camShift(mult=1){
+  return {
+    x: Math.sin(T*.01 + A.presence*3.5) * (10 + A.a*18) * mult,
+    y: Math.cos(T*.013 + A.bass*4.2) * (6 + A.b*12) * mult
+  };
+}
+
 // ─── BG ───
 function drawBG(){
   const b=SC.bg, rea=b.reactive?A.a:0;
+  const cam=camShift(.35);
+  CX.save();
   if(b.type==='solid'){
     CX.fillStyle=b.c1; CX.fillRect(0,0,W,H);
   } else if(b.type==='gradient'){
@@ -463,13 +523,28 @@ function drawBG(){
     g.addColorStop(.5, rotHue(b.c2,rea*80));
     g.addColorStop(1,  rotHue(b.c3,rea*110));
     CX.fillStyle=g; CX.fillRect(0,0,W,H);
+    for(let i=0;i<4;i++){
+      const rx=W*(.2+.2*i)+Math.sin(T*.003+i)*90+cam.x*(i+1);
+      const ry=H*(.15+.12*i)+Math.cos(T*.004+i*2)*50+cam.y*(i+1);
+      const rr=160+i*90+A.lowmid*140;
+      const rg=CX.createRadialGradient(rx,ry,0,rx,ry,rr);
+      rg.addColorStop(0,hsla((hueOff+i*48)%360,100,60,.06+A.presence*.08));
+      rg.addColorStop(1,hsla(0,0,0,0));
+      CX.fillStyle=rg; CX.fillRect(0,0,W,H);
+    }
   } else if(b.type==='stars'){
     CX.fillStyle=b.c1; CX.fillRect(0,0,W,H);
-    for(let i=0;i<240;i++){
-      const sx=(i*137.508)%W, sy=(i*89.337)%H;
-      const alpha=.25+.75*Math.abs(Math.sin(T*.015+i+A.h*4));
-      CX.globalAlpha=alpha; CX.fillStyle='#ffffff';
-      CX.beginPath(); CX.arc(sx,sy,.4+(i%5)*.28,0,Math.PI*2); CX.fill();
+    for(let layer=0; layer<3; layer++){
+      const count=layer===0?90:layer===1?70:50;
+      const speed=(layer+1)*(1+A.a*2.5);
+      for(let i=0;i<count;i++){
+        const sx=((i*137.508)+(T*speed*1.7)+(layer*311)+cam.x*(layer+1)*6)% (W+80)-40;
+        const sy=((i*89.337)+(T*speed*.65)+(layer*177)+cam.y*(layer+1)*3)% (H*.9+80)-40;
+        const alpha=.15+.75*Math.abs(Math.sin(T*.012+i+layer+A.h*6));
+        CX.globalAlpha=alpha*(.45+layer*.2);
+        CX.fillStyle=layer===2?'#ccf6ff':'#ffffff';
+        CX.beginPath(); CX.arc(sx,sy,.5+layer*.35+(i%5)*.22,0,Math.PI*2); CX.fill();
+      }
     }
     CX.globalAlpha=1;
   } else if(b.type==='grid'){
@@ -477,62 +552,105 @@ function drawBG(){
     g.addColorStop(0,b.c1); g.addColorStop(1,b.c2);
     CX.fillStyle=g; CX.fillRect(0,0,W,H);
     CX.strokeStyle=rotHue(b.c3,hueOff); CX.lineWidth=.7;
-    CX.globalAlpha=.18+A.m*.45;
+    CX.globalAlpha=.16+A.m*.45;
     const gs=40+A.b*30;
-    for(let x=0;x<W;x+=gs){CX.beginPath();CX.moveTo(x,0);CX.lineTo(x,H);CX.stroke();}
-    for(let y=0;y<H;y+=gs){CX.beginPath();CX.moveTo(0,y);CX.lineTo(W,y);CX.stroke();}
+    const ox=((T*2.2)+(cam.x*2))%gs;
+    const oy=((T*.8)+(cam.y*2))%gs;
+    for(let x=-gs;x<W+gs;x+=gs){CX.beginPath();CX.moveTo(x+ox,0);CX.lineTo(x+ox,H);CX.stroke();}
+    for(let y=-gs;y<H+gs;y+=gs){CX.beginPath();CX.moveTo(0,y+oy);CX.lineTo(W,y+oy);CX.stroke();}
+    CX.globalAlpha=.14+A.presence*.2;
+    for(let y=0;y<H*.7;y+=12){
+      CX.beginPath();
+      CX.moveTo(0,y+Math.sin(y*.06+T*.03)*6);
+      CX.lineTo(W,y+Math.cos(y*.04+T*.02)*6);
+      CX.stroke();
+    }
     CX.globalAlpha=1;
   } else if(b.type==='blobs'){
     const g=CX.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*.7);
     g.addColorStop(0,rotHue(b.c2,hueOff*.4)); g.addColorStop(1,b.c1);
     CX.fillStyle=g; CX.fillRect(0,0,W,H);
-    for(let k=0;k<6;k++){
-      const bx=W*.1+W*.8*((Math.sin(T*.004+k*1.7)+1)*.5);
-      const by=H*.1+H*.8*((Math.cos(T*.006+k*2.3)+1)*.5);
-      const br=80+A.b*130+k*30;
+    for(let k=0;k<7;k++){
+      const bx=W*.1+W*.8*((Math.sin(T*.004*(1+k*.15)+k*1.7)+1)*.5)+cam.x*(k+1);
+      const by=H*.08+H*.82*((Math.cos(T*.005*(1+k*.12)+k*2.3)+1)*.5)+cam.y*(k+1)*.4;
+      const br=90+A.b*130+k*34+A.sub*70;
       const bg2=CX.createRadialGradient(bx,by,0,bx,by,br);
-      bg2.addColorStop(0,hsla((hueOff+k*60)%360,100,60,.2+A.a*.18));
+      bg2.addColorStop(0,hsla((hueOff+k*60)%360,100,60,.16+A.a*.18));
+      bg2.addColorStop(.5,hsla((hueOff+k*60+40)%360,100,50,.05+A.mid*.09));
       bg2.addColorStop(1,hsla(0,0,0,0));
       CX.fillStyle=bg2; CX.fillRect(0,0,W,H);
     }
   }
+  CX.restore();
 }
 
 // ─── SKY ───
 function drawSky(){
   if(!SC.sky.on) return;
   const sky=SC.sky, sh=H*.75;
+  const cam=camShift(.55);
+  CX.save();
   if(sky.type==='gradient'){
     const g=CX.createLinearGradient(0,0,0,sh);
-    g.addColorStop(0,'rgba(0,10,40,.65)'); g.addColorStop(1,'rgba(0,0,0,0)');
+    g.addColorStop(0,hsla(220+A.treble*40,70,14,.88));
+    g.addColorStop(.5,hsla(250+A.mid*30,60,10,.46));
+    g.addColorStop(1,'rgba(0,0,0,0)');
     CX.fillStyle=g; CX.fillRect(0,0,W,sh);
+    for(let i=0;i<18;i++){
+      const y=i*(sh/18)+Math.sin(T*.02+i)*10;
+      CX.globalAlpha=.03+A.air*.04;
+      CX.fillStyle=rotHue('#66ccff',hueOff+i*8);
+      CX.fillRect(0,y,W,2+A.presence*2);
+    }
+    CX.globalAlpha=1;
   } else if(sky.type==='aurora'){
-    for(let b=0;b<5;b++){
+    for(let b=0;b<6;b++){
       const bh=60+A.m*120+b*42;
-      const by=H*.04+b*(H*.09)+Math.sin(T*.008+b)*20;
+      const by=H*.03+b*(H*.085)+Math.sin(T*.008+b*1.6)*20 + cam.y*(.3+b*.07);
       const hue=(130+b*45+hueOff*.3)%360;
       const ag=CX.createLinearGradient(0,by,0,by+bh);
       ag.addColorStop(0,hsla(hue,100,60,0));
-      ag.addColorStop(.5,hsla(hue,100,60,.08+A.m*.16));
+      ag.addColorStop(.5,hsla(hue,100,60,.09+A.m*.16+A.air*.06));
       ag.addColorStop(1,hsla(hue,100,60,0));
       CX.fillStyle=ag;
       CX.beginPath(); CX.moveTo(0,by+bh);
-      for(let x=0;x<=W;x+=14){
-        CX.lineTo(x, by+Math.sin(x*.008+T*.016+b)*(32*(1+A.m)));
+      for(let x=0;x<=W;x+=12){
+        CX.lineTo(x, by+Math.sin(x*.008+T*.016+b)*(28*(1+A.m))+Math.cos(x*.014+T*.01+b)*12*A.air);
       }
       CX.lineTo(W,by+bh); CX.closePath(); CX.fill();
     }
   } else if(sky.type==='sunset'){
     const g=CX.createLinearGradient(0,0,0,H*.65);
     g.addColorStop(0,`hsl(${210+A.b*55},55%,13%)`);
-    g.addColorStop(.4,`hsl(${35+A.m*25},78%,26%)`);
-    g.addColorStop(1,`hsl(18,85%,14%)`);
+    g.addColorStop(.35,`hsl(${35+A.m*25},78%,26%)`);
+    g.addColorStop(.7,`hsl(${12+A.presence*15},90%,18%)`);
+    g.addColorStop(1,`hsl(18,85%,10%)`);
     CX.fillStyle=g; CX.fillRect(0,0,W,H*.65);
+    CX.globalAlpha=.14+A.air*.12;
+    for(let i=0;i<9;i++){
+      const y=H*.12+i*26+Math.sin(T*.02+i)*7;
+      CX.fillStyle=hsla(24+i*4,95,60,.1+A.air*.08);
+      CX.fillRect(0,y+cam.y*.3,W,3);
+    }
+    CX.globalAlpha=1;
   }
-  // celestial
+
+  for(let i=0;i<3;i++){
+    const layerAlpha=.08+i*.03+A.air*.04;
+    CX.fillStyle=hsla((hueOff+i*55)%360,100,70,layerAlpha);
+    CX.beginPath();
+    CX.moveTo(-40,H*.52+i*24);
+    for(let x=-40;x<=W+40;x+=26){
+      const y=H*.24+i*36+Math.sin(x*.006+T*.01+i)*18+Math.cos(x*.011+T*.016+i)*10;
+      CX.lineTo(x,y+cam.y*.2*(i+1));
+    }
+    CX.lineTo(W+40,0); CX.lineTo(-40,0); CX.closePath();
+    CX.fill();
+  }
+
   const cel=sky.cel;
   if(cel==='moon'){
-    const mx=W*.76,my=H*.13,mr=22+A.b*9;
+    const mx=W*.76+cam.x*1.2,my=H*.13+cam.y*.6,mr=22+A.b*9+A.air*4;
     CX.shadowBlur=30+A.b*45; CX.shadowColor='rgba(130,160,255,.55)';
     const mg=CX.createRadialGradient(mx-4,my-4,0,mx,my,mr);
     mg.addColorStop(0,'rgba(210,225,255,.95)');
@@ -541,10 +659,10 @@ function drawSky(){
     CX.fillStyle=mg; CX.beginPath(); CX.arc(mx,my,mr,0,Math.PI*2); CX.fill();
     CX.shadowBlur=0;
   } else if(cel==='sun'){
-    const sx=W*.72,sy=H*.16,sr=28+A.b*11;
+    const sx=W*.72+cam.x*.8,sy=H*.16+cam.y*.4,sr=28+A.b*11+A.sub*5;
     CX.strokeStyle='#ffcc44'; CX.lineWidth=1.8;
-    for(let r=0;r<12;r++){
-      const a=(r/12)*Math.PI*2+T*.004;
+    for(let r=0;r<14;r++){
+      const a=(r/14)*Math.PI*2+T*.004+A.beat*.2;
       CX.globalAlpha=.22+A.m*.38;
       CX.beginPath();
       CX.moveTo(sx+Math.cos(a)*(sr+8),sy+Math.sin(a)*(sr+8));
@@ -552,12 +670,12 @@ function drawSky(){
       CX.stroke();
     }
     CX.globalAlpha=1;
-    const sg=CX.createRadialGradient(sx,sy,0,sx,sy,sr*2.5);
+    const sg=CX.createRadialGradient(sx,sy,0,sx,sy,sr*2.7);
     sg.addColorStop(0,'#ffffbb'); sg.addColorStop(.4,'#ffaa22'); sg.addColorStop(1,'rgba(255,100,0,0)');
-    CX.fillStyle=sg; CX.beginPath(); CX.arc(sx,sy,sr*2.5,0,Math.PI*2); CX.fill();
+    CX.fillStyle=sg; CX.beginPath(); CX.arc(sx,sy,sr*2.7,0,Math.PI*2); CX.fill();
   } else if(cel==='ring'){
-    const rx=W*.62,ry=H*.17,rr=34+A.b*17;
-    CX.save(); CX.translate(rx,ry); CX.rotate(.28);
+    const rx=W*.62+cam.x,ry=H*.17+cam.y*.5,rr=34+A.b*17+A.presence*8;
+    CX.save(); CX.translate(rx,ry); CX.rotate(.28+Math.sin(T*.01)*.1);
     const rg=CX.createRadialGradient(0,0,rr*.5,0,0,rr);
     rg.addColorStop(0,hsla(0,0,0,0));
     rg.addColorStop(.5,hsla(hueOff%360,100,70,.35));
@@ -568,93 +686,142 @@ function drawSky(){
     CX.beginPath(); CX.ellipse(0,0,rr*1.9,rr*.48,0,0,Math.PI*2); CX.stroke();
     CX.shadowBlur=0; CX.restore();
   } else if(cel==='portal'){
-    const px=W*.68,py=H*.16;
-    for(let ring=3;ring>=0;ring--){
-      const ra=(32+A.a*26)*(1+ring*.38);
-      CX.strokeStyle=hsla((hueOff*1.5+ring*60)%360,100,65,.65-ring*.13);
-      CX.lineWidth=2-ring*.3; CX.shadowBlur=9+ring*6;
+    const px=W*.68+cam.x,py=H*.16+cam.y*.3;
+    for(let ring=4;ring>=0;ring--){
+      const ra=(30+A.a*24)*(1+ring*.34)+Math.sin(T*.03+ring)*6*A.beat;
+      CX.strokeStyle=hsla((hueOff*1.5+ring*60)%360,100,65,.62-ring*.1);
+      CX.lineWidth=2.2-ring*.28; CX.shadowBlur=9+ring*6;
       CX.shadowColor=hsla(hueOff%360,100,70,1);
       CX.beginPath(); CX.arc(px,py,ra,0,Math.PI*2); CX.stroke();
     }
     CX.shadowBlur=0;
   }
+  CX.restore();
 }
 
 // ─── GROUND ───
 function drawGround(){
   if(!SC.gnd.on) return;
   const g=SC.gnd, gY=H*(1-g.h/100), rea=g.reactive?A.b:0;
+  const cam=camShift(.8);
+  CX.save();
   if(g.type==='flat'){
-    CX.fillStyle=g.col; CX.fillRect(0,gY-rea*55,W,H);
-  } else if(g.type==='wave'){
-    CX.beginPath(); CX.moveTo(0,H);
-    for(let x=0;x<=W;x+=3){
-      let y;
-      if(analyser){
-        const idx=Math.floor((x/W)*freqData.length*.4);
-        y=gY-(freqData[idx]/255)*85;
-      } else {
-        y=gY+Math.sin(x*.02+T*.03)*5;
-      }
-      CX.lineTo(x,y);
+    const off=Math.sin(T*.01+A.lowmid*4)*18;
+    const gg=CX.createLinearGradient(0,gY-60,0,H);
+    gg.addColorStop(0,alphaColor(rotHue(g.col,A.b*45), .933));
+    gg.addColorStop(1,alphaColor(g.col, .933));
+    CX.fillStyle=gg; CX.fillRect(0,gY-rea*55+off,W,H);
+    CX.globalAlpha=.14+A.presence*.16;
+    for(let i=0;i<8;i++){
+      CX.fillStyle=rotHue(g.col,40+i*8);
+      CX.fillRect(0,gY+i*14+Math.sin(T*.015+i)*5,W,2);
     }
-    CX.lineTo(W,H); CX.closePath();
-    const gg=CX.createLinearGradient(0,gY-85,0,H);
-    gg.addColorStop(0,rotHue(g.col,A.b*55)+'dd');
-    gg.addColorStop(1,g.col+'aa');
-    CX.fillStyle=gg; CX.fill();
+    CX.globalAlpha=1;
+  } else if(g.type==='wave'){
+    const layers=3;
+    for(let layer=0; layer<layers; layer++){
+      const amp=85*(1-layer*.22);
+      const yShift=layer*26;
+      CX.beginPath(); CX.moveTo(0,H);
+      for(let x=0;x<=W;x+=3){
+        let y;
+        if(analyser){
+          const idx=Math.floor((x/W)*freqData.length*.42);
+          const f=(freqData[idx]||0)/255;
+          y=(gY+yShift)-(f*amp) - Math.sin(x*.009 + T*.03 + layer)*10*A.lowmid;
+        } else {
+          y=gY+yShift+Math.sin(x*.02+T*.03+layer)*5;
+        }
+        y += cam.y*.15*layer;
+        CX.lineTo(x,y);
+      }
+      CX.lineTo(W,H); CX.closePath();
+      const gg=CX.createLinearGradient(0,gY-amp,0,H);
+      gg.addColorStop(0,alphaColor(rotHue(g.col,A.b*55+layer*22), .867));
+      gg.addColorStop(1,alphaColor(g.col, .667));
+      CX.globalAlpha=.42-layer*.1;
+      CX.fillStyle=gg; CX.fill();
+    }
+    CX.globalAlpha=1;
     if(g.glow){
       CX.shadowBlur=22+A.b*40; CX.shadowColor=rotHue(g.col,70);
-      CX.strokeStyle=rotHue(g.col,70); CX.lineWidth=1.5; CX.stroke();
+      CX.strokeStyle=rotHue(g.col,70); CX.lineWidth=1.5;
+      CX.beginPath();
+      for(let x=0;x<=W;x+=4){
+        const idx=Math.floor((x/W)*freqData.length*.42);
+        const f=analyser?(freqData[idx]||0)/255:0;
+        const y=gY-(f*85)-Math.sin(x*.009 + T*.03)*10*A.lowmid;
+        x===0?CX.moveTo(x,y):CX.lineTo(x,y);
+      }
+      CX.stroke();
       CX.shadowBlur=0;
     }
   } else if(g.type==='city'){
-    const nb=24;
-    for(let i=0;i<nb;i++){
-      const bx=(i/nb)*W, bw=(W/nb)*.82;
-      let bh=analyser&&g.reactive
-        ? 22+(freqData[Math.floor((i/nb)*freqData.length*.18)]/255)*(H*g.h/100*.7)
-        : 26+((i*17+3)%7)*18;
-      CX.fillStyle=g.col; CX.fillRect(bx,H-bh,bw,bh);
-      const wc=Math.floor(bw/12),wr=Math.floor(bh/17);
-      for(let row=0;row<wr;row++) for(let col=0;col<wc;col++){
-        if((i*31+row*17+col*7)%10<4) continue;
-        const wa=Math.sin(i*5.3+row*3.7+col*1.9+T*.004)*.5+.5;
-        CX.fillStyle=hsla((hueOff+i*20)%360,80,65,wa*(.22+A.a*.45));
-        CX.fillRect(bx+col*12+2,H-bh+row*17+3,7,10);
+    const scroll=(T*(1+A.sub*3))% (W/12);
+    const nb=28;
+    for(let layer=0; layer<2; layer++){
+      for(let i=0;i<nb;i++){
+        const bx=((i/nb)*W - scroll*(layer?1.8:.7) + W) % (W+60) - 30;
+        const bw=(W/nb)*(.78+layer*.22);
+        let bh=analyser&&g.reactive
+          ? 24+(freqData[Math.floor((i/nb)*freqData.length*.22)]/255)*(H*g.h/100*(.55+layer*.18))
+          : 26+((i*17+3)%7)*18;
+        bh += layer*22;
+        CX.fillStyle=layer?rotHue(g.col,20):g.col;
+        CX.globalAlpha=layer?.9:.55;
+        CX.fillRect(bx,H-bh,bw,bh);
+        const wc=Math.max(1,Math.floor(bw/12)),wr=Math.max(1,Math.floor(bh/17));
+        for(let row=0;row<wr;row++) for(let col=0;col<wc;col++){
+          if((i*31+row*17+col*7+layer)%10<4) continue;
+          const wa=Math.sin(i*5.3+row*3.7+col*1.9+T*.004)*.5+.5;
+          CX.fillStyle=hsla((hueOff+i*20+layer*30)%360,80,65,wa*(.16+A.a*.42));
+          CX.fillRect(bx+col*12+2,H-bh+row*17+3,7,10);
+        }
       }
     }
+    CX.globalAlpha=1;
   } else if(g.type==='mountain'){
-    CX.beginPath(); CX.moveTo(0,H);
-    for(let i=0;i<=10;i++){
-      CX.lineTo((i/10)*W, gY-((i%2===0)?62:20)-rea*55);
+    for(let layer=0; layer<3; layer++){
+      CX.beginPath(); CX.moveTo(0,H);
+      const base=gY+layer*28;
+      for(let i=0;i<=10;i++){
+        const px=(i/10)*W;
+        const peak=((i%2===0)?62:20)+(layer*18);
+        const wav=Math.sin(T*.012+layer+i)*18*A.sub;
+        CX.lineTo(px, base-peak-rea*55*(1-layer*.2)+wav);
+      }
+      CX.lineTo(W,H); CX.closePath();
+      const mg=CX.createLinearGradient(0,base-90,0,H);
+      mg.addColorStop(0,alphaColor(rotHue(g.col,30+layer*20), .733)); mg.addColorStop(1,g.col);
+      CX.globalAlpha=.6-layer*.14;
+      CX.fillStyle=mg; CX.fill();
     }
-    CX.lineTo(W,H); CX.closePath();
-    const mg=CX.createLinearGradient(0,gY-80,0,H);
-    mg.addColorStop(0,rotHue(g.col,30)+'bb'); mg.addColorStop(1,g.col);
-    CX.fillStyle=mg; CX.fill();
+    CX.globalAlpha=1;
   } else if(g.type==='grid3d'){
     const gy2=gY-rea*32;
-    CX.fillStyle=g.col+'1a'; CX.fillRect(0,gy2,W,H-gy2);
+    CX.fillStyle=alphaColor(g.col, .102); CX.fillRect(0,gy2,W,H-gy2);
     const colStr=rotHue(g.col,hueOff);
+    const horizonY=gy2 + Math.sin(T*.018)*6*A.lowmid;
     CX.lineWidth=.9;
-    for(let i=0;i<=20;i++){
-      CX.strokeStyle=colStr; CX.globalAlpha=.15+A.b*.42;
-      CX.beginPath(); CX.moveTo(W/2,gy2); CX.lineTo((i/20)*W,H); CX.stroke();
+    for(let i=0;i<=24;i++){
+      CX.strokeStyle=colStr; CX.globalAlpha=.12+A.b*.42;
+      CX.beginPath(); CX.moveTo(W/2 + cam.x*.3,horizonY); CX.lineTo((i/24)*W + cam.x*(i/24-.5)*.6,H); CX.stroke();
     }
-    for(let j=1;j<=12;j++){
-      const t=Math.pow(j/12,1.8), ly=gy2+(H-gy2)*t, lw=W*(.01+t*.99);
-      CX.globalAlpha=.12+A.b*.36;
-      CX.beginPath(); CX.moveTo((W-lw)/2,ly); CX.lineTo((W+lw)/2,ly); CX.stroke();
+    for(let j=1;j<=16;j++){
+      const t=Math.pow(j/16,1.72), ly=horizonY+(H-horizonY)*t, lw=W*(.01+t*.99);
+      const scroll=((T*(3+A.b*10)) % 48) * t;
+      CX.globalAlpha=.1+A.b*.34;
+      CX.beginPath(); CX.moveTo((W-lw)/2-scroll,ly); CX.lineTo((W+lw)/2+scroll,ly); CX.stroke();
     }
     CX.globalAlpha=1;
     if(g.glow){
       CX.shadowBlur=18+A.b*32; CX.shadowColor=colStr;
-      CX.strokeStyle=colStr; CX.lineWidth=1.4;
-      CX.beginPath(); CX.moveTo(0,gy2); CX.lineTo(W,gy2); CX.stroke();
+      CX.strokeStyle=colStr; CX.lineWidth=1.6;
+      CX.beginPath(); CX.moveTo(0,horizonY); CX.lineTo(W,horizonY); CX.stroke();
       CX.shadowBlur=0;
     }
   }
+  CX.restore();
 }
 
 // ─── ELEMENTS ───
@@ -664,16 +831,27 @@ function drawElems(){
 
 function tickInst(inst,cfg){
   const lv=aLev(cfg.band||'overall');
-  inst.x+=inst.vx; inst.y+=inst.vy;
-  if(inst.x<-150)inst.x=W+150; if(inst.x>W+150)inst.x=-150;
-  if(inst.y<-150)inst.y=H+150; if(inst.y>H+150)inst.y=-150;
-  inst.rot+=(cfg.rotSpd||0)*.022;
-  if(cfg.colMode==='cycle')   inst.hue=(inst.hue+(cfg.colRate||.5))%360;
+  const gain=(cfg.reactGain||1);
+  const moveBoost=(1+lv*.9*gain) * (.55 + inst.depth*.9);
+  inst.phase += .01 + (cfg.pulseRate||1) * .01 + inst.depth*.002;
+  inst.baseX += inst.vx * moveBoost;
+  inst.baseY += inst.vy * moveBoost;
+  if(inst.baseX<-150)inst.baseX=W+150; if(inst.baseX>W+150)inst.baseX=-150;
+  if(inst.baseY<-150)inst.baseY=H+150; if(inst.baseY>H+150)inst.baseY=-150;
+
+  const pulseMode = cfg.pulseMode || 'none';
+  const jitter = pulseMode==='jitter' ? lv * 20 * gain : 0;
+  const orbit = pulseMode==='orbit' ? lv * inst.orbit * gain : 0;
+  inst.x = inst.baseX + Math.cos(inst.phase*1.8 + inst.rot) * orbit + (Math.random()-.5) * jitter;
+  inst.y = inst.baseY + Math.sin(inst.phase*1.4 + inst.rot) * orbit + (Math.random()-.5) * jitter - (1-inst.depth)*20*A.sub;
+
+  inst.rot += ((cfg.rotSpd||0) + ((cfg.reactRot||0) * lv * 3.5 * gain)) * .022;
+  if(cfg.colMode==='cycle')   inst.hue=(inst.hue+(cfg.colRate||.5)+lv*.6)%360;
   if(cfg.colMode==='random'&&beat&&Math.random()<.3) inst.rndCol=rndHex();
   if(cfg.colMode==='beat'&&beat){inst.hue=Math.random()*360;inst.flash=1;}
   inst.flash=Math.max(0,inst.flash-.04);
   if(cfg.trail){
-    inst.trail.push({x:inst.x,y:inst.y,s:inst.sz*.4});
+    inst.trail.push({x:inst.x,y:inst.y,s:inst.sz*.4*(1+lv*.3)});
     if(inst.trail.length>16) inst.trail.shift();
   }
 }
@@ -686,10 +864,42 @@ function instCol(inst,cfg){
   return cfg.colVal||'#00ffff';
 }
 
+const INVADER_SPRITES = [
+  ['00111100','11111111','11011011','11111111','00100100','01011010','10000001','01000010'],
+  ['00111100','11111111','10111101','11111111','00100100','01011010','10100101','01000010']
+];
+
+function drawPixelSprite(sprite, px, fill){
+  const rows=sprite.length, cols=sprite[0].length;
+  CX.fillStyle=fill;
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++) if(sprite[y][x]==='1') CX.fillRect((x-cols/2)*px,(y-rows/2)*px,px,px);
+}
+
+function drawWireCube(sz, depth, color){
+  const verts=[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+  const angX=T*.01+depth*.7, angY=T*.013+A.presence*1.8+depth, angZ=T*.008+A.beat*.6;
+  const rot=(v)=>{
+    let [x,y,z]=v;
+    let cy=Math.cos(angY), sy=Math.sin(angY); [x,z]=[x*cy-z*sy,x*sy+z*cy];
+    let cx=Math.cos(angX), sx=Math.sin(angX); [y,z]=[y*cx-z*sx,y*sx+z*cx];
+    let cz=Math.cos(angZ), sz2=Math.sin(angZ); [x,y]=[x*cz-y*sz2,x*sz2+y*cz];
+    const p=1.8/(z+4.5);
+    return [x*sz*p,y*sz*p];
+  };
+  const pts=verts.map(rot);
+  const edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  CX.strokeStyle=color; CX.lineWidth=1.35+A.beat*1.4;
+  for(const [a,b] of edges){CX.beginPath();CX.moveTo(pts[a][0],pts[a][1]);CX.lineTo(pts[b][0],pts[b][1]);CX.stroke();}
+}
+
 function drawInst(inst,cfg){
   const lv=aLev(cfg.band||'overall');
-  const sz=cfg.reactSz?inst.sz*(1+lv*1.9):inst.sz;
-  const alpha=(cfg.opacity||.8)*(cfg.reactOp?(.25+lv*.75):1);
+  const gain=(cfg.reactGain||1);
+  const depthScale=.55 + inst.depth*1.15;
+  let sz=(cfg.reactSz?inst.sz*(1+lv*1.9*gain):inst.sz) * depthScale;
+  if((cfg.pulseMode||'none')==='shrink') sz=inst.sz*depthScale*Math.max(.2,1-lv*.55*gain);
+  if((cfg.pulseMode||'none')==='flash') inst.flash=Math.max(inst.flash, lv*.65*gain);
+  const alpha=(cfg.opacity||.8)*(cfg.reactOp?(.25+lv*.75*gain):1) * (.45 + inst.depth*.55);
   const col=instCol(inst,cfg);
   CX.save();
   // trail
@@ -701,8 +911,8 @@ function drawInst(inst,cfg){
     });
   }
   CX.globalAlpha=alpha; CX.fillStyle=col; CX.strokeStyle=col;
-  if(lv>.28||inst.flash>0){
-    CX.shadowBlur=8+lv*26+inst.flash*32; CX.shadowColor=col;
+  if(lv>.18||inst.flash>0){
+    CX.shadowBlur=8+lv*26*(cfg.reactGlow||1)+(inst.flash*32); CX.shadowColor=col;
   }
   CX.translate(inst.x,inst.y); CX.rotate(inst.rot);
 
@@ -735,6 +945,26 @@ function drawInst(inst,cfg){
       }
       CX.stroke();
     }
+  } else if(cfg.type==='invader'){
+    const sprite=INVADER_SPRITES[(Math.floor(T/18)+Math.floor(inst.phase*10))%INVADER_SPRITES.length];
+    drawPixelSprite(sprite, Math.max(2,sz*.16), col);
+    if(lv>.3){
+      CX.globalAlpha=alpha*.25;
+      drawPixelSprite(sprite, Math.max(2,sz*.19), '#ffffff');
+    }
+  } else if(cfg.type==='paddle'){
+    CX.globalAlpha=alpha;
+    const pw=sz*2.5, ph=Math.max(6,sz*.38);
+    CX.fillRect(-pw/2,-ph/2,pw,ph);
+    CX.strokeRect(-pw/2,-ph/2,pw,ph);
+    const ballX=Math.sin(inst.phase*2.4)*(pw*.45 + lv*18);
+    const ballY=-ph*1.6 - Math.abs(Math.cos(inst.phase*3.2))*(sz*1.1 + lv*18);
+    CX.beginPath(); CX.arc(ballX,ballY,Math.max(3,sz*.18),0,Math.PI*2); CX.fill();
+    CX.globalAlpha=alpha*.25;
+    CX.beginPath(); CX.moveTo(0,0); CX.lineTo(ballX,ballY); CX.stroke();
+  } else if(cfg.type==='cube3d'){
+    CX.globalAlpha=alpha;
+    drawWireCube(sz, inst.depth, col);
   }
   CX.shadowBlur=0; CX.restore();
 }
@@ -861,6 +1091,77 @@ const BUILTINS={
     ],audio:{sens:6,smooth:72}}
 };
 
+
+BUILTINS['Sub Pulse Cathedral']={
+  bg:{type:'gradient',c1:'#02020f',c2:'#090022',c3:'#001133',reactive:true},
+  sky:{on:true,type:'gradient',cel:'ring'},
+  gnd:{on:true,type:'wave',col:'#07122f',h:24,reactive:true,glow:true},
+  elems:[
+    {id:'e1',type:'polygon',sides:12,count:10,sizeMin:48,sizeMax:120,colMode:'cycle',colVal:'#44ddff',colRate:.18,band:'sub',reactSz:true,reactOp:false,reactGain:1.5,reactRot:.5,reactGlow:1.5,speed:.12,rotSpd:.2,pulseMode:'orbit',trail:false,opacity:.24},
+    {id:'e2',type:'wave',count:5,sizeMin:90,sizeMax:180,colMode:'cycle',colVal:'#00e5ff',colRate:.45,band:'bass',reactSz:true,reactOp:true,reactGain:1.4,reactRot:.25,reactGlow:1.6,speed:.18,rotSpd:.4,pulseMode:'flash',trail:false,opacity:.9},
+    {id:'e3',type:'particle',count:180,sizeMin:2,sizeMax:6,colMode:'fixed',colVal:'#9fe8ff',band:'sub',reactSz:true,reactOp:false,reactGain:2.1,reactRot:0,reactGlow:1.4,speed:.9,rotSpd:0,pulseMode:'jitter',trail:true,opacity:.55}
+  ],audio:{sens:7,smooth:68}};
+
+BUILTINS['Glass Air']={
+  bg:{type:'stars',c1:'#00040c',c2:'#00121f',c3:'#001a2b',reactive:false},
+  sky:{on:true,type:'aurora',cel:'moon'},
+  gnd:{on:true,type:'mountain',col:'#04111d',h:20,reactive:false,glow:false},
+  elems:[
+    {id:'e1',type:'letter',chars:'✦✧·°*',count:42,sizeMin:18,sizeMax:44,colMode:'cycle',colVal:'#c8ffff',colRate:.22,band:'air',reactSz:true,reactOp:true,reactGain:1.6,reactRot:.18,reactGlow:1.8,speed:.25,rotSpd:.12,pulseMode:'flash',trail:false,opacity:.75},
+    {id:'e2',type:'polygon',sides:5,count:12,sizeMin:26,sizeMax:60,colMode:'cycle',colVal:'#7df9ff',colRate:.12,band:'presence',reactSz:true,reactOp:false,reactGain:1.2,reactRot:.35,reactGlow:1.5,speed:.2,rotSpd:.3,pulseMode:'orbit',trail:false,opacity:.25},
+    {id:'e3',type:'particle',count:160,sizeMin:1,sizeMax:3,colMode:'fixed',colVal:'#ffffff',band:'air',reactSz:false,reactOp:true,reactGain:1.4,reactRot:0,reactGlow:2,speed:.35,rotSpd:0,pulseMode:'jitter',trail:true,opacity:.55}
+  ],audio:{sens:5,smooth:88}};
+
+BUILTINS['Beat Reactor']={
+  bg:{type:'grid',c1:'#05000a',c2:'#120021',c3:'#330044',reactive:true},
+  sky:{on:true,type:'void',cel:'portal'},
+  gnd:{on:true,type:'grid3d',col:'#ff33cc',h:34,reactive:true,glow:true},
+  elems:[
+    {id:'e1',type:'polygon',sides:4,count:24,sizeMin:20,sizeMax:56,colMode:'beat',colVal:'#ff44aa',colRate:1.6,band:'beat',reactSz:true,reactOp:true,reactGain:2.3,reactRot:1.2,reactGlow:2,speed:1.1,rotSpd:1.5,pulseMode:'jitter',trail:true,opacity:.72},
+    {id:'e2',type:'letter',chars:'B E A T ◈ ⬡'.replace(/ /g,''),count:18,sizeMin:28,sizeMax:72,colMode:'beat',colVal:'#ffe600',colRate:2.2,band:'beat',reactSz:true,reactOp:true,reactGain:1.8,reactRot:1.1,reactGlow:2,speed:.55,rotSpd:.8,pulseMode:'flash',trail:false,opacity:.88},
+    {id:'e3',type:'wave',count:6,sizeMin:65,sizeMax:150,colMode:'cycle',colVal:'#ff66ff',colRate:.9,band:'bass',reactSz:true,reactOp:false,reactGain:1.5,reactRot:.5,reactGlow:1.7,speed:.35,rotSpd:1,pulseMode:'orbit',trail:false,opacity:.8}
+  ],audio:{sens:8,smooth:54}};
+
+BUILTINS['Presence Bloom']={
+  bg:{type:'blobs',c1:'#090013',c2:'#120028',c3:'#1d003f',reactive:true},
+  sky:{on:true,type:'gradient',cel:'portal'},
+  gnd:{on:true,type:'flat',col:'#120022',h:26,reactive:true,glow:true},
+  elems:[
+    {id:'e1',type:'polygon',sides:8,count:18,sizeMin:18,sizeMax:54,colMode:'cycle',colVal:'#ff66ff',colRate:.55,band:'presence',reactSz:true,reactOp:true,reactGain:1.35,reactRot:.8,reactGlow:1.8,speed:.35,rotSpd:.9,pulseMode:'orbit',trail:false,opacity:.46},
+    {id:'e2',type:'particle',count:220,sizeMin:2,sizeMax:5,colMode:'cycle',colVal:'#ffaaff',colRate:.3,band:'mid',reactSz:true,reactOp:false,reactGain:1.2,reactRot:0,reactGlow:1.3,speed:.7,rotSpd:0,pulseMode:'jitter',trail:true,opacity:.45},
+    {id:'e3',type:'letter',chars:'VOICE✦◆',count:16,sizeMin:24,sizeMax:60,colMode:'fixed',colVal:'#ffd1ff',band:'presence',reactSz:true,reactOp:true,reactGain:1.55,reactRot:.25,reactGlow:2,speed:.22,rotSpd:.2,pulseMode:'flash',trail:false,opacity:.82}
+  ],audio:{sens:6,smooth:74}};
+
+BUILTINS['Arcade Invasion']={
+  bg:{type:'stars',c1:'#03000d',c2:'#100022',c3:'#06102a',reactive:true},
+  sky:{on:true,type:'gradient',cel:'portal'},
+  gnd:{on:true,type:'grid3d',col:'#00d9ff',h:34,reactive:true,glow:true},
+  elems:[
+    {id:'e1',type:'invader',count:18,sizeMin:28,sizeMax:54,colMode:'cycle',colVal:'#66f7ff',colRate:.65,band:'bass',reactSz:true,reactOp:true,reactGain:1.45,reactRot:.25,reactGlow:1.5,speed:.32,rotSpd:.15,pulseMode:'jitter',trail:false,opacity:.82},
+    {id:'e2',type:'cube3d',count:9,sizeMin:34,sizeMax:92,colMode:'cycle',colVal:'#ff4dff',colRate:.3,band:'mid',reactSz:true,reactOp:false,reactGain:1.1,reactRot:.8,reactGlow:1.4,speed:.18,rotSpd:.1,pulseMode:'orbit',trail:false,opacity:.5},
+    {id:'e3',type:'particle',count:140,sizeMin:1,sizeMax:4,colMode:'cycle',colVal:'#ffffff',colRate:.2,band:'air',reactSz:true,reactOp:false,reactGain:1,reactRot:0,reactGlow:1,speed:1.15,rotSpd:0,pulseMode:'jitter',trail:true,opacity:.5}
+  ],audio:{sens:7,smooth:68}};
+
+BUILTINS['Arkanoid Skyline']={
+  bg:{type:'gradient',c1:'#020818',c2:'#16002a',c3:'#041326',reactive:true},
+  sky:{on:true,type:'sunset',cel:'sun'},
+  gnd:{on:true,type:'city',col:'#09081f',h:32,reactive:true,glow:true},
+  elems:[
+    {id:'e1',type:'paddle',count:10,sizeMin:24,sizeMax:54,colMode:'beat',colVal:'#ffe066',colRate:.4,band:'sub',reactSz:true,reactOp:false,reactGain:1.5,reactRot:.12,reactGlow:1.7,speed:.42,rotSpd:.06,pulseMode:'orbit',trail:false,opacity:.9},
+    {id:'e2',type:'cube3d',count:6,sizeMin:44,sizeMax:100,colMode:'cycle',colVal:'#ff7a00',colRate:.25,band:'presence',reactSz:true,reactOp:true,reactGain:1.1,reactRot:.9,reactGlow:1.2,speed:.18,rotSpd:.05,pulseMode:'none',trail:false,opacity:.4},
+    {id:'e3',type:'letter',chars:'▣■□+',count:16,sizeMin:20,sizeMax:42,colMode:'random',colVal:'#ffaa44',colRate:.6,band:'treble',reactSz:true,reactOp:true,reactGain:1.25,reactRot:.15,reactGlow:1.2,speed:.55,rotSpd:.25,pulseMode:'flash',trail:true,opacity:.74}
+  ],audio:{sens:7,smooth:72}};
+
+BUILTINS['Voxel Horizon']={
+  bg:{type:'grid',c1:'#02030b',c2:'#120022',c3:'#00aaff',reactive:true},
+  sky:{on:true,type:'aurora',cel:'ring'},
+  gnd:{on:true,type:'mountain',col:'#08111f',h:28,reactive:true,glow:false},
+  elems:[
+    {id:'e1',type:'cube3d',count:12,sizeMin:36,sizeMax:96,colMode:'cycle',colVal:'#66ccff',colRate:.22,band:'lowmid',reactSz:true,reactOp:false,reactGain:1.25,reactRot:1.2,reactGlow:1.1,speed:.24,rotSpd:.05,pulseMode:'orbit',trail:false,opacity:.5},
+    {id:'e2',type:'invader',count:8,sizeMin:24,sizeMax:44,colMode:'beat',colVal:'#ff55ff',colRate:.2,band:'beat',reactSz:true,reactOp:true,reactGain:1.6,reactRot:.2,reactGlow:1.5,speed:.28,rotSpd:.08,pulseMode:'flash',trail:false,opacity:.76},
+    {id:'e3',type:'wave',count:4,sizeMin:70,sizeMax:140,colMode:'cycle',colVal:'#00ffee',colRate:.3,band:'presence',reactSz:true,reactOp:false,reactGain:1.2,reactRot:.2,reactGlow:1.3,speed:.16,rotSpd:.02,pulseMode:'orbit',trail:false,opacity:.72}
+  ],audio:{sens:6,smooth:78}};
+
 function initPresets(){
   let saved={};
   try{saved=JSON.parse(localStorage.getItem('ss3_presets')||'{}');}catch(e){}
@@ -930,10 +1231,13 @@ function renderPlSel(){
 
 // ─── ELEMENT UI ───
 const EL_DEF={
-  polygon:{type:'polygon',sides:6,count:15,sizeMin:22,sizeMax:55,colMode:'cycle',colVal:'#00ffff',colRate:.5,band:'mid',reactSz:true,reactOp:false,speed:.5,rotSpd:.5,trail:false,opacity:.75},
-  letter:{type:'letter',chars:'ABCDE✦★◆⬡',count:16,sizeMin:20,sizeMax:48,colMode:'cycle',colVal:'#ff00ff',colRate:.8,band:'treble',reactSz:true,reactOp:false,speed:.4,rotSpd:.2,trail:false,opacity:.82},
-  particle:{type:'particle',count:90,sizeMin:2,sizeMax:6,colMode:'cycle',colVal:'#ffffff',colRate:.3,band:'overall',reactSz:true,reactOp:false,speed:.8,trail:false,opacity:.72},
-  wave:{type:'wave',count:4,sizeMin:65,sizeMax:120,colMode:'cycle',colVal:'#00ff88',colRate:.2,band:'overall',reactSz:true,reactOp:false,speed:.22,rotSpd:0,trail:false,opacity:.85}
+  polygon:{type:'polygon',sides:6,count:15,sizeMin:22,sizeMax:55,colMode:'cycle',colVal:'#00ffff',colRate:.5,band:'mid',reactSz:true,reactOp:false,reactGain:1,reactRot:.2,reactGlow:1,speed:.5,rotSpd:.5,pulseMode:'none',trail:false,opacity:.75},
+  letter:{type:'letter',chars:'ABCDE✦★◆⬡',count:16,sizeMin:20,sizeMax:48,colMode:'cycle',colVal:'#ff00ff',colRate:.8,band:'treble',reactSz:true,reactOp:false,reactGain:1,reactRot:.15,reactGlow:1,speed:.4,rotSpd:.2,pulseMode:'flash',trail:false,opacity:.82},
+  particle:{type:'particle',count:90,sizeMin:2,sizeMax:6,colMode:'cycle',colVal:'#ffffff',colRate:.3,band:'overall',reactSz:true,reactOp:false,reactGain:1,reactRot:0,reactGlow:1,speed:.8,rotSpd:0,pulseMode:'jitter',trail:false,opacity:.72},
+  wave:{type:'wave',count:4,sizeMin:65,sizeMax:120,colMode:'cycle',colVal:'#00ff88',colRate:.2,band:'overall',reactSz:true,reactOp:false,reactGain:1,reactRot:.1,reactGlow:1.2,speed:.22,rotSpd:0,pulseMode:'orbit',trail:false,opacity:.85},
+  invader:{type:'invader',count:12,sizeMin:26,sizeMax:52,colMode:'cycle',colVal:'#66f7ff',colRate:.45,band:'bass',reactSz:true,reactOp:true,reactGain:1.3,reactRot:.1,reactGlow:1.5,speed:.3,rotSpd:.08,pulseMode:'jitter',trail:false,opacity:.82},
+  paddle:{type:'paddle',count:8,sizeMin:28,sizeMax:54,colMode:'beat',colVal:'#ffe066',colRate:.3,band:'sub',reactSz:true,reactOp:false,reactGain:1.4,reactRot:.06,reactGlow:1.4,speed:.34,rotSpd:.04,pulseMode:'orbit',trail:false,opacity:.88},
+  cube3d:{type:'cube3d',count:8,sizeMin:40,sizeMax:96,colMode:'cycle',colVal:'#ff66ff',colRate:.25,band:'mid',reactSz:true,reactOp:false,reactGain:1.1,reactRot:1.1,reactGlow:1.2,speed:.18,rotSpd:.02,pulseMode:'orbit',trail:false,opacity:.52}
 };
 
 function addElem(type){
@@ -948,7 +1252,7 @@ function upElem(id,k,v){const e=SC.elems.find(x=>x.id===id);if(e)e[k]=v;}
 
 function renderElemList(){
   const c=document.getElementById('elem-list'); c.innerHTML='';
-  const ICO={polygon:'◆',letter:'A',particle:'·',wave:'∿'};
+  const ICO={polygon:'◆',letter:'A',particle:'·',wave:'∿',invader:'⌘',paddle:'▭',cube3d:'◫'};
   SC.elems.forEach((el,i)=>{
     const d=document.createElement('div'); d.className='ec';
     d.innerHTML=`
@@ -977,14 +1281,33 @@ function renderElemList(){
     ${el.type!=='particle'?`<div class="f"><label>Rotación</label><input type="range" min="-5" max="5" step=".1" value="${el.rotSpd||0}" oninput="upElem('${el.id}','rotSpd',+this.value)"></div>`:''}
     <div class="f"><label>Opacidad</label><input type="range" min=".05" max="1" step=".05" value="${el.opacity||.75}" oninput="upElem('${el.id}','opacity',+this.value)"></div>
     <div class="f"><label>Banda reactiva</label><select onchange="upElem('${el.id}','band',this.value)">
-      <option value="bass"    ${el.band==='bass'   ?'selected':''}>Bass</option>
-      <option value="mid"     ${el.band==='mid'    ?'selected':''}>Mid</option>
-      <option value="treble"  ${el.band==='treble' ?'selected':''}>Treble</option>
-      <option value="overall" ${el.band==='overall'?'selected':''}>General</option>
+      <option value="sub"      ${el.band==='sub'      ?'selected':''}>Sub</option>
+      <option value="bass"     ${el.band==='bass'     ?'selected':''}>Bass</option>
+      <option value="lowmid"   ${el.band==='lowmid'   ?'selected':''}>Low Mid</option>
+      <option value="mid"      ${el.band==='mid'      ?'selected':''}>Mid</option>
+      <option value="presence" ${el.band==='presence' ?'selected':''}>Presence</option>
+      <option value="treble"   ${el.band==='treble'   ?'selected':''}>Treble</option>
+      <option value="air"      ${el.band==='air'      ?'selected':''}>Air</option>
+      <option value="beat"     ${el.band==='beat'     ?'selected':''}>Beat</option>
+      <option value="overall"  ${el.band==='overall'  ?'selected':''}>General</option>
     </select></div>
+    <div class="row">
+      <div class="f"><label>Intensidad</label><input type="range" min="0" max="3" step=".05" value="${el.reactGain||1}" oninput="upElem('${el.id}','reactGain',+this.value)"></div>
+      <div class="f"><label>Modo pulso</label><select onchange="upElem('${el.id}','pulseMode',this.value)">
+        <option value="none"   ${(!el.pulseMode||el.pulseMode==='none')?'selected':''}>Ninguno</option>
+        <option value="orbit"  ${el.pulseMode==='orbit' ?'selected':''}>Órbita</option>
+        <option value="jitter" ${el.pulseMode==='jitter'?'selected':''}>Temblor</option>
+        <option value="flash"  ${el.pulseMode==='flash' ?'selected':''}>Flash</option>
+        <option value="shrink" ${el.pulseMode==='shrink'?'selected':''}>Contraer</option>
+      </select></div>
+    </div>
     <div class="row">
       <div class="ck" style="margin:0"><input type="checkbox" ${el.reactSz?'checked':''} onchange="upElem('${el.id}','reactSz',this.checked)"><label>Tamaño reactivo</label></div>
       <div class="ck" style="margin:0 0 0 10px"><input type="checkbox" ${el.reactOp?'checked':''} onchange="upElem('${el.id}','reactOp',this.checked)"><label>Opacidad reactiva</label></div>
+    </div>
+    <div class="row">
+      <div class="f"><label>Rotación reactiva</label><input type="range" min="0" max="3" step=".05" value="${el.reactRot||0}" oninput="upElem('${el.id}','reactRot',+this.value)"></div>
+      <div class="f"><label>Brillo reactivo</label><input type="range" min="0" max="3" step=".05" value="${el.reactGlow||1}" oninput="upElem('${el.id}','reactGlow',+this.value)"></div>
     </div>
     <div class="ck" style="margin-top:5px"><input type="checkbox" ${el.trail?'checked':''} onchange="upElem('${el.id}','trail',this.checked)"><label>Estela</label></div>`;
     c.appendChild(d);
@@ -1066,6 +1389,21 @@ function rndHex(){return'#'+Math.floor(Math.random()*0xffffff).toString(16).padS
 
 // Canvas-safe color helpers — NEVER use 'transparent' keyword in canvas gradients
 function hsla(h,s,l,a){return `hsla(${h|0},${s}%,${l}%,${+a.toFixed(3)})`;}
+function alphaColor(col,a){
+  a=Math.max(0,Math.min(1,+a||0));
+  if(!col) return `rgba(255,255,255,${+a.toFixed(3)})`;
+  if(col.startsWith('#') && (col.length===7 || col.length===4)){
+    let hex=col.slice(1);
+    if(hex.length===3) hex=hex.split('').map(ch=>ch+ch).join('');
+    const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+    return `rgba(${r},${g},${b},${+a.toFixed(3)})`;
+  }
+  const m=col.match(/^rgb\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\)$/i);
+  if(m) return `rgba(${m[1]},${m[2]},${m[3]},${+a.toFixed(3)})`;
+  const m2=col.match(/^rgba\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([^)]+)\)$/i);
+  if(m2) return `rgba(${m2[1]},${m2[2]},${m2[3]},${+a.toFixed(3)})`;
+  return col;
+}
 
 function rotHue(hex,deg){
   if(!deg||!hex||hex[0]!=='#') return hex;
@@ -1088,12 +1426,22 @@ function rotHue(hex,deg){
 }
 
 // ─── BOOT ───
-initPresets();
-render();
+try {
+  const _wlcBtn = document.getElementById('wlc-btn');
+  const _wlcSkip = document.getElementById('wlc-skip');
+  if (_wlcBtn) _wlcBtn.addEventListener('click', wlcStart);
+  if (_wlcSkip) _wlcSkip.addEventListener('click', wlcClose);
 
-// Wire welcome buttons here, after all functions are defined
-document.getElementById('wlc-btn').addEventListener('click', wlcStart);
-document.getElementById('wlc-skip').addEventListener('click', wlcClose);
+  initPresets();
+  render();
+} catch (e) {
+  console.error('BOOT ERROR', e);
+  const err = document.getElementById('wlc-err');
+  if (err) {
+    err.innerHTML = '<b>Error de arranque:</b> ' + (e && e.message ? e.message : e);
+    err.style.display = 'block';
+  }
+}
 </script>
 </body>
 </html>
